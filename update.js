@@ -1,23 +1,21 @@
 // تحديث تلقائي لنتائج كأس العالم 2026
-// يشتغل كل يوم الساعة 12 ظهراً (UTC+3)
-
 const https = require('https');
 
 const FB_SECRET  = process.env.FIREBASE_SECRET;
-const FD_API_KEY = process.env.FD_API_KEY; // football-data.org key
+const AF_KEY     = process.env.AF_API_KEY; // api-football.com key
 const FB_HOST    = 'world-cup-5be29-default-rtdb.firebaseio.com';
 
-// World Cup 2026 competition ID on football-data.org
-const WC_ID = 2000;
+// World Cup 2026 league ID on api-football.com
+const WC_LEAGUE = 1;
+const WC_SEASON = 2026;
 
-function fetchFD(path) {
+function fetchAF(path) {
   return new Promise((resolve, reject) => {
-    const options = {
-      hostname: 'api.football-data.org',
-      path: `/v4${path}`,
-      headers: { 'X-Auth-Token': FD_API_KEY }
-    };
-    https.get(options, res => {
+    https.get({
+      hostname: 'v3.football.api-sports.io',
+      path: path,
+      headers: { 'x-apisports-key': AF_KEY }
+    }, res => {
       let d = '';
       res.on('data', c => d += c);
       res.on('end', () => {
@@ -32,12 +30,11 @@ function fbGet(path) {
   return new Promise((resolve, reject) => {
     https.get({
       hostname: FB_HOST,
-      path: `${path}.json?auth=${FB_SECRET}`,
-      headers: { 'Accept': 'application/json' }
+      path: `${path}.json?auth=${FB_SECRET}`
     }, res => {
       let d = '';
       res.on('data', c => d += c);
-      res.on('end', () => resolve(JSON.parse(d)));
+      res.on('end', () => { try{resolve(JSON.parse(d));}catch(e){resolve(null);} });
     }).on('error', reject);
   });
 }
@@ -70,13 +67,12 @@ function fbUpdate(data) {
   });
 }
 
-// ترجمة الأسماء
-const EN_TO_AR = {
-  'Mexico':'المكسيك','South Africa':'جنوب أفريقيا','Korea Republic':'كوريا الجنوبية','Czechia':'تشيكيا',
-  'Canada':'كندا','Bosnia and Herzegovina':'البوسنة والهرسك','Qatar':'قطر','Switzerland':'سويسرا',
+const EN_AR = {
+  'Mexico':'المكسيك','South Africa':'جنوب أفريقيا','South Korea':'كوريا الجنوبية','Czech Republic':'تشيكيا',
+  'Canada':'كندا','Bosnia':'البوسنة','Qatar':'قطر','Switzerland':'سويسرا',
   'Brazil':'البرازيل','Morocco':'المغرب','Haiti':'هايتي','Scotland':'إسكتلندا',
-  'United States':'أمريكا','USA':'أمريكا','Paraguay':'باراغواي','Australia':'أستراليا','Türkiye':'تركيا','Turkey':'تركيا',
-  'Germany':'ألمانيا','Curaçao':'كوراساو','Ivory Coast':'كوت ديفوار','Ecuador':'الإكوادور',
+  'USA':'أمريكا','United States':'أمريكا','Paraguay':'باراغواي','Australia':'أستراليا','Turkey':'تركيا',
+  'Germany':'ألمانيا','Curacao':'كوراساو','Ivory Coast':'كوت ديفوار','Ecuador':'الإكوادور',
   'Netherlands':'هولندا','Japan':'اليابان','Sweden':'السويد','Tunisia':'تونس',
   'Belgium':'بلجيكا','Egypt':'مصر','Iran':'إيران','New Zealand':'نيوزيلندا',
   'Spain':'إسبانيا','Cape Verde':'كابو فيردي','Uruguay':'أوروغواي','Saudi Arabia':'السعودية',
@@ -85,15 +81,7 @@ const EN_TO_AR = {
   'Portugal':'البرتغال','Congo DR':'الكونغو','Uzbekistan':'أوزبكستان','Colombia':'كولومبيا',
   'England':'إنجلترا','Croatia':'كرواتيا','Ghana':'غانا','Panama':'بنما',
 };
-
-function toAr(name) {
-  if (!name) return null;
-  if (EN_TO_AR[name]) return EN_TO_AR[name];
-  for (const [en, ar] of Object.entries(EN_TO_AR)) {
-    if (name.toLowerCase().includes(en.toLowerCase())) return ar;
-  }
-  return name;
-}
+function toAr(n){ if(!n)return null; if(EN_AR[n])return EN_AR[n]; for(const[e,a]of Object.entries(EN_AR)){if(n.toLowerCase().includes(e.toLowerCase()))return a;} return n; }
 
 async function calcScores(results) {
   const preds = await fbGet('/preds');
@@ -120,101 +108,71 @@ async function calcScores(results) {
 }
 
 async function main() {
-  console.log('🏆 تحديث نتائج كأس العالم 2026 - ' + new Date().toISOString());
+  console.log('🏆 تحديث كأس العالم 2026 - ' + new Date().toISOString());
 
-  // جلب ترتيب المجموعات
-  console.log('جلب ترتيب المجموعات...');
-  const standingsData = await fetchFD(`/competitions/${WC_ID}/standings`);
-  
   let results = await fbGet('/preds/_results') || { order:{}, best3:[], bracket:{} };
   if (!results.order) results.order = {};
   if (!results.best3) results.best3 = [];
   if (!results.bracket) results.bracket = {};
 
-  if (standingsData.standings) {
-    standingsData.standings.forEach(group => {
-      const gId = group.group?.replace('GROUP_','');
-      if (!gId) return;
-      const sorted = [...group.table]
-        .sort((a,b) => b.points-a.points || b.goalDifference-a.goalDifference || b.goalsFor-a.goalsFor)
-        .map(row => toAr(row.team?.name));
-      results.order[gId] = sorted.filter(Boolean);
-    });
-    console.log('✅ تم تحديث ترتيب المجموعات');
-  }
+  // 1. جلب ترتيب المجموعات
+  console.log('جلب ترتيب المجموعات...');
+  try {
+    const stData = await fetchAF(`/standings?league=${WC_LEAGUE}&season=${WC_SEASON}`);
+    const standings = stData.response?.[0]?.league?.standings;
+    if (standings) {
+      const displayStandings = {};
+      standings.forEach(group => {
+        if (!Array.isArray(group)) return;
+        const gId = group[0]?.group?.replace('Group ','');
+        if (!gId) return;
+        displayStandings[gId] = group.map(t => ({
+          pos: t.rank, name: t.team?.name,
+          played: t.all?.played, won: t.all?.win,
+          draw: t.all?.draw, lost: t.all?.lose,
+          gd: t.goalsDiff, pts: t.points
+        }));
+        results.order[gId] = group.map(t => toAr(t.team?.name)).filter(Boolean);
+      });
+      await fbSet('/display/standings', displayStandings);
+      console.log('✅ ترتيب المجموعات محدّث');
+    }
+  } catch(e) { console.log('خطأ ترتيب:', e.message); }
 
-  // جلب نتائج المباريات الإقصائية + الكل للعرض
+  // 2. جلب نتائج المباريات
   console.log('جلب نتائج المباريات...');
-  const matchesData = await fetchFD(`/competitions/${WC_ID}/matches`);
-  
-  const stageMap = {
-    'ROUND_OF_32':'r32','ROUND_OF_16':'r16',
-    'QUARTER_FINALS':'qf','SEMI_FINALS':'sf','FINAL':'fin'
-  };
+  try {
+    const mData = await fetchAF(`/fixtures?league=${WC_LEAGUE}&season=${WC_SEASON}&status=FT-HT-1H-2H-ET-P`);
+    const matches = mData.response || [];
+    console.log(`تم جلب ${matches.length} مباراة`);
 
-  if (matchesData.matches) {
-    matchesData.matches.forEach((m, idx) => {
-      if (m.status !== 'FINISHED') return;
-      const rKey = stageMap[m.stage];
+    const displayMatches = matches.map(m => ({
+      home: m.teams?.home?.name, away: m.teams?.away?.name,
+      hs: m.goals?.home, as: m.goals?.away,
+      status: m.fixture?.status?.short,
+      stage: m.league?.round, matchday: m.league?.round,
+      date: m.fixture?.date, group: m.league?.round
+    }));
+    await fbSet('/display/matches', displayMatches);
+
+    // الإقصائي
+    const roundMap = {'Round of 32':'r32','Round of 16':'r16','Quarter-finals':'qf','Semi-finals':'sf','Final':'fin'};
+    matches.forEach((m, idx) => {
+      if (m.fixture?.status?.short !== 'FT') return;
+      const rKey = roundMap[m.league?.round];
       if (!rKey) return;
-      const hs = m.score?.fullTime?.home;
-      const as_ = m.score?.fullTime?.away;
+      const home = toAr(m.teams?.home?.name);
+      const away = toAr(m.teams?.away?.name);
+      const hs = m.goals?.home, as_ = m.goals?.away;
       if (hs == null || as_ == null) return;
-      const home = toAr(m.homeTeam?.name);
-      const away = toAr(m.awayTeam?.name);
       const winner = hs > as_ ? home : away;
       if (winner) results.bracket[`${rKey}_${idx%16}`] = winner;
     });
-    console.log('✅ تم تحديث نتائج الإقصائي');
-  }
+    console.log('✅ نتائج المباريات محدّثة');
+  } catch(e) { console.log('خطأ مباريات:', e.message); }
 
   await fbSet('/preds/_results', results);
   await calcScores(results);
-
-  // حفظ بيانات النتائج للعرض في الموقع
-  try {
-    // حفظ الترتيب للعرض
-    if (standingsData.standings) {
-      const displayStandings = {};
-      standingsData.standings.forEach(g => {
-        const gId = g.group?.replace('GROUP_','');
-        if (!gId) return;
-        displayStandings[gId] = g.table.map(t => ({
-          pos: t.position,
-          name: t.team?.name,
-          played: t.playedGames,
-          won: t.won,
-          draw: t.draw,
-          lost: t.lost,
-          gd: t.goalDifference,
-          pts: t.points
-        }));
-      });
-      await fbSet('/display/standings', displayStandings);
-    }
-
-    // حفظ المباريات للعرض
-    if (matchesData?.matches) {
-      const displayMatches = matchesData.matches
-        .filter(m => ['FINISHED','IN_PLAY','PAUSED'].includes(m.status))
-        .map(m => ({
-          home: m.homeTeam?.name,
-          away: m.awayTeam?.name,
-          hs: m.score?.fullTime?.home,
-          as: m.score?.fullTime?.away,
-          status: m.status,
-          stage: m.stage,
-          matchday: m.matchday,
-          date: m.utcDate,
-          group: m.group
-        }));
-      await fbSet('/display/matches', displayMatches);
-    }
-    console.log('✅ تم حفظ بيانات العرض');
-  } catch(e) {
-    console.log('خطأ في حفظ العرض:', e.message);
-  }
-
   await fbSet('/preds/_lastUpdate', new Date().toISOString());
   console.log('✅ اكتمل التحديث!');
 }
