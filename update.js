@@ -143,9 +143,9 @@ async function main() {
     console.log('✅ تم تحديث ترتيب المجموعات');
   }
 
-  // جلب نتائج المباريات الإقصائية
-  console.log('جلب نتائج الإقصائي...');
-  const matchesData = await fetchFD(`/competitions/${WC_ID}/matches?stage=ROUND_OF_32,ROUND_OF_16,QUARTER_FINALS,SEMI_FINALS,FINAL`);
+  // جلب نتائج المباريات الإقصائية + الكل للعرض
+  console.log('جلب نتائج المباريات...');
+  const matchesData = await fetchFD(`/competitions/${WC_ID}/matches`);
   
   const stageMap = {
     'ROUND_OF_32':'r32','ROUND_OF_16':'r16',
@@ -170,6 +170,51 @@ async function main() {
 
   await fbSet('/preds/_results', results);
   await calcScores(results);
+
+  // حفظ بيانات النتائج للعرض في الموقع
+  try {
+    // حفظ الترتيب للعرض
+    if (standingsData.standings) {
+      const displayStandings = {};
+      standingsData.standings.forEach(g => {
+        const gId = g.group?.replace('GROUP_','');
+        if (!gId) return;
+        displayStandings[gId] = g.table.map(t => ({
+          pos: t.position,
+          name: t.team?.name,
+          played: t.playedGames,
+          won: t.won,
+          draw: t.draw,
+          lost: t.lost,
+          gd: t.goalDifference,
+          pts: t.points
+        }));
+      });
+      await fbSet('/display/standings', displayStandings);
+    }
+
+    // حفظ المباريات للعرض
+    if (matchesData?.matches) {
+      const displayMatches = matchesData.matches
+        .filter(m => ['FINISHED','IN_PLAY','PAUSED'].includes(m.status))
+        .map(m => ({
+          home: m.homeTeam?.name,
+          away: m.awayTeam?.name,
+          hs: m.score?.fullTime?.home,
+          as: m.score?.fullTime?.away,
+          status: m.status,
+          stage: m.stage,
+          matchday: m.matchday,
+          date: m.utcDate,
+          group: m.group
+        }));
+      await fbSet('/display/matches', displayMatches);
+    }
+    console.log('✅ تم حفظ بيانات العرض');
+  } catch(e) {
+    console.log('خطأ في حفظ العرض:', e.message);
+  }
+
   await fbSet('/preds/_lastUpdate', new Date().toISOString());
   console.log('✅ اكتمل التحديث!');
 }
