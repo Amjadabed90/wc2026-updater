@@ -158,21 +158,15 @@ async function main() {
   try {
     // 1. جلب المباريات المنتهية
     console.log('جلب النتائج من API...');
-    let matches;
+    let matchList = [];
     try {
-      matches = await get(WC_API, '/api/matches?status=finished');
+      const resp = await get(WC_API, '/get/games');
+      const raw = resp.data || resp;
+      matchList = Array.isArray(raw) ? raw : [];
+      console.log(`تم جلب ${matchList.length} مباراة`);
     } catch(e) {
-      console.log('API الأول فشل، جرب بديل...');
-      matches = await get(WC_API, '/api/v1/matches');
+      console.log('تعذر جلب المباريات:', e.message);
     }
-
-    if (!matches || (!matches.data && !Array.isArray(matches))) {
-      console.log('لا توجد بيانات من API:', JSON.stringify(matches).slice(0,300));
-      return;
-    }
-
-    const matchList = matches.data || matches;
-    console.log(`تم جلب ${matchList.length} مباراة`);
 
     // 2. جلب النتائج الحالية من Firebase
     let results = await fbGet('/preds/_results') || { order:{}, best3:[], bracket:{} };
@@ -183,7 +177,7 @@ async function main() {
     // 3. جلب ترتيب المجموعات
     let standings;
     try {
-      standings = await get(WC_API, '/api/groups');
+      standings = await get(WC_API, '/get/groups');
       const stData = standings.data || standings;
 
       if (Array.isArray(stData)) {
