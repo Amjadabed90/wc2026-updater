@@ -9,8 +9,9 @@ const https = require('https');
 const FB_DB_URL  = process.env.FIREBASE_DB_URL;   // من Secrets
 const FB_SECRET  = process.env.FIREBASE_SECRET;   // من Secrets
 
-// ── API كأس العالم المجاني ──
-const WC_API = 'worldcup26.ir';
+// ── API كأس العالم المجاني (بدون مفتاح) ──
+const WC_API_MATCHES = 'https://raw.githubusercontent.com/openfootball/worldcup.json/master/2026/worldcup.json';
+const WC_API_STANDINGS = 'https://raw.githubusercontent.com/openfootball/worldcup.json/master/2026/worldcup.json';
 
 // ── دالة fetch بسيطة ──
 function get(host, path) {
@@ -27,6 +28,19 @@ function get(host, path) {
     });
     req.on('error', reject);
     req.end();
+  });
+}
+
+function fetchUrl(url) {
+  return new Promise((resolve, reject) => {
+    https.get(url, { headers: { 'User-Agent': 'wc2026-updater' } }, res => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => {
+        try { resolve(JSON.parse(data)); }
+        catch(e) { reject(new Error('JSON parse: ' + data.slice(0,100))); }
+      });
+    }).on('error', reject);
   });
 }
 
@@ -156,17 +170,18 @@ async function main() {
   console.log('الوقت:', new Date().toISOString());
 
   try {
-    // 1. جلب المباريات المنتهية
-    console.log('جلب النتائج من API...');
-    let matchList = [];
+    // 1. جلب بيانات كأس العالم من openfootball (مجاني بدون مفتاح)
+    console.log('جلب النتائج من openfootball...');
+    let wcData = null;
     try {
-      const resp = await get(WC_API, '/get/games');
-      const raw = resp.data || resp;
-      matchList = Array.isArray(raw) ? raw : [];
-      console.log(`تم جلب ${matchList.length} مباراة`);
+      wcData = await fetchUrl(WC_API_MATCHES);
+      console.log('✅ تم جلب البيانات');
     } catch(e) {
-      console.log('تعذر جلب المباريات:', e.message);
+      console.log('تعذر جلب البيانات:', e.message);
+      return;
     }
+    const matchList = wcData.matches || wcData.rounds?.flatMap(r => r.matches) || [];
+    console.log(`تم جلب ${matchList.length} مباراة`);
 
     // 2. جلب النتائج الحالية من Firebase
     let results = await fbGet('/preds/_results') || { order:{}, best3:[], bracket:{} };
@@ -174,25 +189,36 @@ async function main() {
     if (!results.best3) results.best3 = [];
     if (!results.bracket) results.bracket = {};
 
-    // 3. جلب ترتيب المجموعات
-    let standings;
+    // 3. حساب ترتيب المجموعات من نتائج المباريات
     try {
-      standings = await get(WC_API, '/get/groups');
-      const stData = standings.data || standings;
-
-      if (Array.isArray(stData)) {
-        stData.forEach(group => {
-          const gId = group.name?.replace('Group ','') || group.id;
-          if (!gId) return;
-          const teams = group.teams || group.standings || [];
-          // ترتب حسب الموقع
-          const sorted = [...teams].sort((a,b) => (a.position||a.rank||99) - (b.position||b.rank||99));
-          results.order[gId] = sorted.map(t => toAr(t.team?.name || t.name)).filter(Boolean);
-        });
-        console.log('✅ تم تحديث ترتيب المجموعات');
-      }
+      const groupStats = {};
+      matchList.forEach(m => {
+        if (!m.group) return;
+        const gId = m.group.replace('Group ','');
+        const home = toAr(m.team1 || m.home_team?.name);
+        const away = toAr(m.team2 || m.away_team?.name);
+        const hs = m.score?.ft?.[0] ?? m.home_score ?? m.score1;
+        const as_ = m.score?.ft?.[1] ?? m.away_score ?? m.score2;
+        if (hs == null || as_ == null || home == null || away == null) return;
+        if (!groupStats[gId]) groupStats[gId] = {};
+        if (!groupStats[gId][home]) groupStats[gId][home] = {pts:0,gd:0,gf:0};
+        if (!groupStats[gId][away]) groupStats[gId][away] = {pts:0,gd:0,gf:0};
+        const hg = parseInt(hs), ag = parseInt(as_);
+        groupStats[gId][home].gf += hg; groupStats[gId][home].gd += hg-ag;
+        groupStats[gId][away].gf += ag; groupStats[gId][away].gd += ag-hg;
+        if (hg > ag) { groupStats[gId][home].pts += 3; }
+        else if (ag > hg) { groupStats[gId][away].pts += 3; }
+        else { groupStats[gId][home].pts += 1; groupStats[gId][away].pts += 1; }
+      });
+      Object.entries(groupStats).forEach(([gId, teams]) => {
+        const sorted = Object.entries(teams)
+          .sort((a,b) => b[1].pts-a[1].pts || b[1].gd-a[1].gd || b[1].gf-a[1].gf)
+          .map(([name]) => name);
+        if (sorted.length > 0) results.order[gId] = sorted;
+      });
+      console.log('✅ تم حساب ترتيب المجموعات');
     } catch(e) {
-      console.log('تعذر جلب ترتيب المجموعات:', e.message);
+      console.log('خطأ في حساب الترتيب:', e.message);
     }
 
     // 4. معالجة نتائج المباريات الإقصائية
