@@ -21,4 +21,5 @@ jobs:
         env:
           FIREBASE_DB_URL: ${{ secrets.FIREBASE_DB_URL }}
           FIREBASE_SECRET: ${{ secrets.FIREBASE_SECRET }}
+          FD_API_KEY: ${{ secrets.FD_API_KEY }}
         run: node update.js
