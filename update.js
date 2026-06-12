@@ -142,9 +142,12 @@ async function main() {
   // 2. جلب نتائج المباريات
   console.log('جلب نتائج المباريات...');
   try {
-    const mData = await fetchAF(`/fixtures?league=${WC_LEAGUE}&season=${WC_SEASON}&status=FT,HT,1H,2H,ET,P,LIVE`);
-    const matches = mData.response || [];
-    console.log(`تم جلب ${matches.length} مباراة`);
+    const mData = await fetchAF(`/fixtures?league=${WC_LEAGUE}&season=${WC_SEASON}`);
+    const allMatches = mData.response || [];
+    console.log(`تم جلب ${allMatches.length} مباراة إجمالاً`);
+    console.log('عينة الحالات:', JSON.stringify(mData.errors || {}), '| العدد:', mData.results);
+    const matches = allMatches.filter(m => ['FT','HT','1H','2H','ET','P','LIVE','AET','PEN'].includes(m.fixture?.status?.short));
+    console.log(`من ضمنها ${matches.length} مباراة جارية/منتهية`);
 
     const displayMatches = matches.map(m => ({
       home: m.teams?.home?.name, away: m.teams?.away?.name,
