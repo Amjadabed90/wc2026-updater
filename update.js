@@ -142,7 +142,7 @@ async function main() {
   // 2. جلب نتائج المباريات
   console.log('جلب نتائج المباريات...');
   try {
-    const mData = await fetchAF(`/fixtures?league=${WC_LEAGUE}&season=${WC_SEASON}&status=FT-HT-1H-2H-ET-P`);
+    const mData = await fetchAF(`/fixtures?league=${WC_LEAGUE}&season=${WC_SEASON}&status=FT,HT,1H,2H,ET,P,LIVE`);
     const matches = mData.response || [];
     console.log(`تم جلب ${matches.length} مباراة`);
 
